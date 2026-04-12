@@ -17,7 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from . import cache, data_sources, indicators
-from .alpha_engine import AlphaEngine, AlphaExpressionError
+from .alpha_engine import AlphaEngine, AlphaExpressionError, BacktestResult
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -46,6 +46,16 @@ class AlphaRequest(BaseModel):
     start: Optional[str] = None
     end: Optional[str] = None
     adjust: str = "qfq"
+
+
+class BacktestRequest(BaseModel):
+    code: str
+    expression: str
+    start: Optional[str] = None
+    end: Optional[str] = None
+    adjust: str = "qfq"
+    annual_risk_free: float = 0.0
+    trading_days: int = 252
 
 
 class BatchQuoteRequest(BaseModel):
@@ -206,6 +216,60 @@ def compute_alpha(req: AlphaRequest):
         "expression": req.expression,
         "dates": dates,
         "values": values,
+    }
+
+
+@app.post("/api/alpha/backtest")
+def backtest_alpha(req: BacktestRequest):
+    """
+    Backtest a custom alpha factor expression and return alpha, beta, and
+    Sharpe ratio over the requested date range.
+
+    The backtest uses the **sign of the lagged factor** as the daily position
+    (−1 = short, 0 = flat, +1 = long) and multiplies it by the stock's daily
+    return to produce strategy returns.  Jensen's alpha and beta are estimated
+    via OLS regression of strategy returns on market (stock) returns; the
+    Sharpe ratio is annualised on an excess-return basis.
+
+    Parameters
+    ----------
+    code:             A-share stock code, e.g. "000001"
+    expression:       Alpha factor expression, e.g. "rank(delta(close, 5))"
+    start:            ISO date "YYYY-MM-DD" (default: 1 year ago)
+    end:              ISO date "YYYY-MM-DD" (default: today)
+    adjust:           Price adjustment: "qfq" | "hfq" | "" (default: "qfq")
+    annual_risk_free: Annualised risk-free rate (default: 0.0)
+    trading_days:     Trading days per year for annualisation (default: 252)
+    """
+    df = data_sources.get_daily_history(
+        req.code, req.start or "", req.end or "", req.adjust
+    )
+    if df.empty:
+        raise HTTPException(status_code=404, detail=f"No data for {req.code}")
+
+    try:
+        engine = AlphaEngine(df)
+        result = engine.backtest(
+            req.expression,
+            annual_risk_free=req.annual_risk_free,
+            trading_days=req.trading_days,
+        )
+    except AlphaExpressionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {
+        "code": req.code,
+        "expression": req.expression,
+        "start": req.start,
+        "end": req.end,
+        "alpha": result.alpha,
+        "beta": result.beta,
+        "sharpe_ratio": result.sharpe_ratio,
+        "annualized_return": result.annualized_return,
+        "annualized_volatility": result.annualized_volatility,
+        "dates": result.dates,
+        "strategy_returns": result.strategy_returns,
+        "cumulative_returns": result.cumulative_returns,
     }
 
 

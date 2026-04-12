@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from backend.alpha_engine import AlphaEngine, AlphaExpressionError
+from backend.alpha_engine import AlphaEngine, AlphaExpressionError, BacktestResult
 
 
 @pytest.fixture()
@@ -195,3 +195,87 @@ def test_disallowed_lambda(engine):
 def test_disallowed_list_comprehension(engine):
     with pytest.raises(AlphaExpressionError):
         engine.eval("[x for x in close]")
+
+
+# ── Backtest ──────────────────────────────────────────────────────────────────
+
+@pytest.fixture()
+def engine_with_dates() -> AlphaEngine:
+    """AlphaEngine backed by synthetic OHLCV data with a date column."""
+    np.random.seed(42)
+    n = 120
+    close = 10.0 + np.cumsum(np.random.randn(n) * 0.2)
+    open_ = close + np.random.randn(n) * 0.05
+    high = np.maximum(close, open_) + np.abs(np.random.randn(n) * 0.1)
+    low = np.minimum(close, open_) - np.abs(np.random.randn(n) * 0.1)
+    volume = np.random.randint(100_000, 5_000_000, n).astype(float)
+    dates = pd.date_range("2023-01-01", periods=n, freq="B").strftime("%Y-%m-%d")
+    df = pd.DataFrame(
+        {
+            "date": dates,
+            "open": open_,
+            "high": high,
+            "low": low,
+            "close": close,
+            "volume": volume,
+        }
+    )
+    return AlphaEngine(df)
+
+
+def test_backtest_returns_backtest_result(engine_with_dates):
+    result = engine_with_dates.backtest("delta(close, 5)")
+    assert isinstance(result, BacktestResult)
+
+
+def test_backtest_alpha_is_float(engine_with_dates):
+    result = engine_with_dates.backtest("delta(close, 5)")
+    assert result.alpha is not None
+    assert isinstance(result.alpha, float)
+
+
+def test_backtest_beta_is_float(engine_with_dates):
+    result = engine_with_dates.backtest("rank(delta(close, 5))")
+    assert result.beta is not None
+    assert isinstance(result.beta, float)
+
+
+def test_backtest_sharpe_is_float(engine_with_dates):
+    result = engine_with_dates.backtest("ts_rank(volume, 10)")
+    assert result.sharpe_ratio is not None
+    assert isinstance(result.sharpe_ratio, float)
+
+
+def test_backtest_strategy_returns_length(engine_with_dates):
+    result = engine_with_dates.backtest("delta(close, 5)")
+    assert len(result.strategy_returns) == len(result.dates)
+    assert len(result.cumulative_returns) == len(result.strategy_returns)
+
+
+def test_backtest_dates_are_strings(engine_with_dates):
+    result = engine_with_dates.backtest("close")
+    assert all(isinstance(d, str) for d in result.dates)
+
+
+def test_backtest_with_risk_free_rate(engine_with_dates):
+    result = engine_with_dates.backtest("delta(close, 1)", annual_risk_free=0.03)
+    assert result.sharpe_ratio is not None
+
+
+def test_backtest_invalid_expression(engine_with_dates):
+    with pytest.raises(AlphaExpressionError):
+        engine_with_dates.backtest("close +* 1")
+
+
+def test_backtest_too_few_rows():
+    """Engine with only 1 row should return a result with None stats."""
+    df = pd.DataFrame(
+        {"date": ["2024-01-01"], "open": [10.0], "high": [10.5],
+         "low": [9.5], "close": [10.0], "volume": [1e6]}
+    )
+    engine = AlphaEngine(df)
+    result = engine.backtest("close")
+    assert result.alpha is None
+    assert result.beta is None
+    assert result.sharpe_ratio is None
+
