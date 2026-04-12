@@ -321,7 +321,7 @@ class AlphaEngine:
         annualized_return = float(np.mean(strat_clean)) * trading_days
 
         excess_returns = strat_clean - daily_rf
-        vol = float(np.std(excess_returns, ddof=1))
+        vol = float(np.std(strat_clean, ddof=1))
         annualized_volatility = vol * math.sqrt(trading_days)
         sharpe = (
             float(np.mean(excess_returns)) / vol * math.sqrt(trading_days)
