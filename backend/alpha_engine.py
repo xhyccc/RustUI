@@ -27,6 +27,8 @@ from typing import Union
 import numpy as np
 import pandas as pd
 
+from .utils import nan_to_none
+
 # Allowed AST node types for security
 _ALLOWED_NODES = {
     ast.Expression,
@@ -241,7 +243,4 @@ class AlphaEngine:
     def eval_to_list(self, expression: str) -> list:
         """Evaluate expression and return a list of floats (NaN → None)."""
         series = self.eval(expression)
-        return [
-            None if (v is None or (isinstance(v, float) and math.isnan(v))) else round(float(v), 6)
-            for v in series
-        ]
+        return [nan_to_none(v) for v in series]

@@ -10,6 +10,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from .utils import series_to_list as _s
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Moving averages
@@ -211,10 +213,6 @@ def compute_all(df: pd.DataFrame) -> dict:
     h = df["high"]
     lo = df["low"]
     v = df["volume"]
-
-    def _s(series: pd.Series) -> list:
-        return [None if (x is None or (isinstance(x, float) and np.isnan(x))) else round(float(x), 4)
-                for x in series]
 
     result: dict = {}
 
