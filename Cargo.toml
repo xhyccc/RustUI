@@ -1,0 +1,28 @@
+[package]
+name = "rustui"
+version = "0.1.0"
+edition = "2021"
+description = "A-share stock analysis: real-time quotes, technical indicators and alpha factors"
+
+[[bin]]
+name = "rustui"
+path = "src/main.rs"
+
+[lib]
+name = "rustui"
+path = "src/lib.rs"
+
+[dependencies]
+eframe = { version = "0.31", features = ["default"] }
+egui = "0.31"
+egui_plot = "0.31"
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", features = ["json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+[dev-dependencies]
+tokio-test = "0.4"
