@@ -17,7 +17,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from . import cache, data_sources, indicators
-from .alpha_engine import AlphaEngine, AlphaExpressionError, BacktestResult
+from .alpha_engine import AlphaEngine, AlphaExpressionError
+from .backtest import BacktestResult
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -56,6 +57,8 @@ class BacktestRequest(BaseModel):
     adjust: str = "qfq"
     annual_risk_free: float = 0.0
     trading_days: int = 252
+    asset_type: str = "stock"
+    """Asset type: 'stock' (A-share via akshare) | 'fund' (ETF/fund via akshare) | 'yfinance' (international via yfinance)."""
 
 
 class BatchQuoteRequest(BaseModel):
@@ -222,28 +225,46 @@ def compute_alpha(req: AlphaRequest):
 @app.post("/api/alpha/backtest")
 def backtest_alpha(req: BacktestRequest):
     """
-    Backtest a custom alpha factor expression and return alpha, beta, and
-    Sharpe ratio over the requested date range.
+    Backtest a custom alpha factor expression using backtrader and return
+    alpha (Jensen's), beta, and Sharpe ratio over the requested date range.
 
-    The backtest uses the **sign of the lagged factor** as the daily position
-    (−1 = short, 0 = flat, +1 = long) and multiplies it by the stock's daily
-    return to produce strategy returns.  Jensen's alpha and beta are estimated
-    via OLS regression of strategy returns on market (stock) returns; the
-    Sharpe ratio is annualised on an excess-return basis.
+    The backtest is powered by `backtrader <https://github.com/mementum/backtrader>`_.
+    The alpha factor signal is computed on the historical OHLCV data, then a
+    :class:`AlphaSignalStrategy` translates the **lagged** signal into long /
+    flat / short positions (no look-ahead bias).  Jensen's alpha and beta are
+    estimated via OLS regression; the Sharpe ratio is extracted from
+    backtrader's built-in ``SharpeRatio`` analyser.
 
     Parameters
     ----------
-    code:             A-share stock code, e.g. "000001"
+    code:             Asset code or ticker (interpretation depends on *asset_type*)
     expression:       Alpha factor expression, e.g. "rank(delta(close, 5))"
     start:            ISO date "YYYY-MM-DD" (default: 1 year ago)
     end:              ISO date "YYYY-MM-DD" (default: today)
     adjust:           Price adjustment: "qfq" | "hfq" | "" (default: "qfq")
     annual_risk_free: Annualised risk-free rate (default: 0.0)
     trading_days:     Trading days per year for annualisation (default: 252)
+    asset_type:       Data source — "stock" (A-share via akshare, default) |
+                      "fund" (Chinese ETF/fund via akshare) |
+                      "yfinance" (international ticker via yfinance)
     """
-    df = data_sources.get_daily_history(
-        req.code, req.start or "", req.end or "", req.adjust
-    )
+    asset_type = (req.asset_type or "stock").lower()
+
+    if asset_type == "fund":
+        df = data_sources.get_fund_history(
+            req.code, req.start or "", req.end or "", req.adjust
+        )
+    elif asset_type == "yfinance":
+        df = data_sources.get_yfinance_history(
+            req.code,
+            start=req.start or "",
+            end=req.end or "",
+        )
+    else:
+        df = data_sources.get_daily_history(
+            req.code, req.start or "", req.end or "", req.adjust
+        )
+
     if df.empty:
         raise HTTPException(status_code=404, detail=f"No data for {req.code}")
 
@@ -260,6 +281,7 @@ def backtest_alpha(req: BacktestRequest):
     return {
         "code": req.code,
         "expression": req.expression,
+        "asset_type": asset_type,
         "start": req.start,
         "end": req.end,
         "alpha": result.alpha,

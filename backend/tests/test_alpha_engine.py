@@ -6,7 +6,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from backend.alpha_engine import AlphaEngine, AlphaExpressionError, BacktestResult
+from backend.alpha_engine import AlphaEngine, AlphaExpressionError
+from backend.backtest import BacktestResult
 
 
 @pytest.fixture()

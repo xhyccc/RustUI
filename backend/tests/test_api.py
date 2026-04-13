@@ -190,6 +190,7 @@ def test_backtest_alpha_success(client):
     data = resp.json()
     assert data["code"] == "000001"
     assert data["expression"] == "delta(close, 5)"
+    assert data["asset_type"] == "stock"
     assert "alpha" in data
     assert "beta" in data
     assert "sharpe_ratio" in data
@@ -249,3 +250,56 @@ def test_backtest_alpha_not_found(client):
             json={"code": "999999", "expression": "close"},
         )
     assert resp.status_code == 404
+
+
+def test_backtest_asset_type_fund(client):
+    mock_df = _make_ohlcv_df(120)
+    with patch("backend.main.data_sources.get_fund_history", return_value=mock_df):
+        resp = client.post(
+            "/api/alpha/backtest",
+            json={
+                "code": "510300",
+                "expression": "delta(close, 5)",
+                "asset_type": "fund",
+            },
+        )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["asset_type"] == "fund"
+    assert data["code"] == "510300"
+    assert "alpha" in data
+
+
+def test_backtest_asset_type_yfinance(client):
+    mock_df = _make_ohlcv_df(120)
+    with patch("backend.main.data_sources.get_yfinance_history", return_value=mock_df):
+        resp = client.post(
+            "/api/alpha/backtest",
+            json={
+                "code": "^GSPC",
+                "expression": "delta(close, 5)",
+                "asset_type": "yfinance",
+                "start": "2023-01-01",
+                "end": "2023-12-31",
+            },
+        )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["asset_type"] == "yfinance"
+    assert data["code"] == "^GSPC"
+    assert "alpha" in data
+
+
+def test_backtest_asset_type_unknown_defaults_to_stock(client):
+    mock_df = _make_ohlcv_df(120)
+    with patch("backend.main.data_sources.get_daily_history", return_value=mock_df):
+        resp = client.post(
+            "/api/alpha/backtest",
+            json={
+                "code": "000001",
+                "expression": "close",
+                "asset_type": "STOCK",
+            },
+        )
+    assert resp.status_code == 200
+    assert resp.json()["asset_type"] == "stock"
