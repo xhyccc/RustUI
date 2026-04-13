@@ -249,6 +249,11 @@ def backtest_alpha(req: BacktestRequest):
                       "yfinance" (international ticker via yfinance)
     """
     asset_type = (req.asset_type or "stock").lower()
+    if asset_type not in {"stock", "fund", "yfinance"}:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported asset_type '{asset_type}'. Choose 'stock', 'fund', or 'yfinance'.",
+        )
 
     if asset_type == "fund":
         df = data_sources.get_fund_history(

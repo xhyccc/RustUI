@@ -177,7 +177,7 @@ def run_backtest(
 
     # ── Build the signal map (lagged by 1 bar) ────────────────────────────────
     date_strs: list[str] = [
-        str(d) for d in df["date"].tolist()
+        str(d) for d in pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d").tolist()
     ]
     shifted_vals = signal_series.shift(1).tolist()
     signal_map: dict[str, float] = {}
@@ -275,7 +275,7 @@ def run_backtest(
         ann_alpha = round(alpha_daily * trading_days, 6)
         beta_val = round(beta_val, 6)
     else:
-        beta_val = 0.0
+        beta_val = None
         ann_alpha = (
             round(float(np.mean(strat_clean)) * trading_days, 6)
             if len(strat_clean) > 0

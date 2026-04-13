@@ -290,7 +290,21 @@ def test_backtest_asset_type_yfinance(client):
     assert "alpha" in data
 
 
-def test_backtest_asset_type_unknown_defaults_to_stock(client):
+def test_backtest_asset_type_unknown_returns_400(client):
+    mock_df = _make_ohlcv_df(120)
+    with patch("backend.main.data_sources.get_daily_history", return_value=mock_df):
+        resp = client.post(
+            "/api/alpha/backtest",
+            json={
+                "code": "000001",
+                "expression": "close",
+                "asset_type": "unknown_type",
+            },
+        )
+    assert resp.status_code == 400
+
+
+def test_backtest_asset_type_case_insensitive(client):
     mock_df = _make_ohlcv_df(120)
     with patch("backend.main.data_sources.get_daily_history", return_value=mock_df):
         resp = client.post(
