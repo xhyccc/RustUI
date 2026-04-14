@@ -18,6 +18,7 @@ from pydantic import BaseModel
 
 from . import cache, data_sources, indicators
 from .alpha_engine import AlphaEngine, AlphaExpressionError
+from .backtest import BacktestResult
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -46,6 +47,18 @@ class AlphaRequest(BaseModel):
     start: Optional[str] = None
     end: Optional[str] = None
     adjust: str = "qfq"
+
+
+class BacktestRequest(BaseModel):
+    code: str
+    expression: str
+    start: Optional[str] = None
+    end: Optional[str] = None
+    adjust: str = "qfq"
+    annual_risk_free: float = 0.0
+    trading_days: int = 252
+    asset_type: str = "stock"
+    """Asset type: 'stock' (A-share via akshare) | 'fund' (ETF/fund via akshare) | 'yfinance' (international via yfinance)."""
 
 
 class BatchQuoteRequest(BaseModel):
@@ -206,6 +219,84 @@ def compute_alpha(req: AlphaRequest):
         "expression": req.expression,
         "dates": dates,
         "values": values,
+    }
+
+
+@app.post("/api/alpha/backtest")
+def backtest_alpha(req: BacktestRequest):
+    """
+    Backtest a custom alpha factor expression using backtrader and return
+    alpha (Jensen's), beta, and Sharpe ratio over the requested date range.
+
+    The backtest is powered by `backtrader <https://github.com/mementum/backtrader>`_.
+    The alpha factor signal is computed on the historical OHLCV data, then a
+    :class:`AlphaSignalStrategy` translates the **lagged** signal into long /
+    flat / short positions (no look-ahead bias).  Jensen's alpha and beta are
+    estimated via OLS regression; the Sharpe ratio is extracted from
+    backtrader's built-in ``SharpeRatio`` analyser.
+
+    Parameters
+    ----------
+    code:             Asset code or ticker (interpretation depends on *asset_type*)
+    expression:       Alpha factor expression, e.g. "rank(delta(close, 5))"
+    start:            ISO date "YYYY-MM-DD" (default: 1 year ago)
+    end:              ISO date "YYYY-MM-DD" (default: today)
+    adjust:           Price adjustment: "qfq" | "hfq" | "" (default: "qfq")
+    annual_risk_free: Annualised risk-free rate (default: 0.0)
+    trading_days:     Trading days per year for annualisation (default: 252)
+    asset_type:       Data source — "stock" (A-share via akshare, default) |
+                      "fund" (Chinese ETF/fund via akshare) |
+                      "yfinance" (international ticker via yfinance)
+    """
+    asset_type = (req.asset_type or "stock").lower()
+    if asset_type not in {"stock", "fund", "yfinance"}:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported asset_type '{asset_type}'. Choose 'stock', 'fund', or 'yfinance'.",
+        )
+
+    if asset_type == "fund":
+        df = data_sources.get_fund_history(
+            req.code, req.start or "", req.end or "", req.adjust
+        )
+    elif asset_type == "yfinance":
+        df = data_sources.get_yfinance_history(
+            req.code,
+            start=req.start or "",
+            end=req.end or "",
+        )
+    else:
+        df = data_sources.get_daily_history(
+            req.code, req.start or "", req.end or "", req.adjust
+        )
+
+    if df.empty:
+        raise HTTPException(status_code=404, detail=f"No data for {req.code}")
+
+    try:
+        engine = AlphaEngine(df)
+        result = engine.backtest(
+            req.expression,
+            annual_risk_free=req.annual_risk_free,
+            trading_days=req.trading_days,
+        )
+    except AlphaExpressionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {
+        "code": req.code,
+        "expression": req.expression,
+        "asset_type": asset_type,
+        "start": req.start,
+        "end": req.end,
+        "alpha": result.alpha,
+        "beta": result.beta,
+        "sharpe_ratio": result.sharpe_ratio,
+        "annualized_return": result.annualized_return,
+        "annualized_volatility": result.annualized_volatility,
+        "dates": result.dates,
+        "strategy_returns": result.strategy_returns,
+        "cumulative_returns": result.cumulative_returns,
     }
 
 

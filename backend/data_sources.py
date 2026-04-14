@@ -275,19 +275,32 @@ def get_yfinance_history(
     ticker: str,
     period: str = "1y",
     interval: str = "1d",
+    start: str = "",
+    end: str = "",
 ) -> pd.DataFrame:
     """
     Fetch OHLCV via yfinance.  Useful for indices (^GSPC, ^HSI) or ETFs.
     For A-shares append .SS (Shanghai) or .SZ (Shenzhen) suffix.
+
+    Supports both ``period`` (e.g. "1y") and explicit ``start``/``end`` dates
+    (ISO format "YYYY-MM-DD").  When ``start`` or ``end`` are provided they
+    take precedence over ``period``.
     """
-    key = _cache_key("yf", ticker, period, interval)
+    key = _cache_key("yf", ticker, period, interval, start, end)
     cached = cache.get(key)
     if cached is not None:
         return pd.DataFrame(cached)
 
     try:
         t = yf.Ticker(ticker)
-        df = t.history(period=period, interval=interval)
+        if start or end:
+            df = t.history(
+                start=start or None,
+                end=end or None,
+                interval=interval,
+            )
+        else:
+            df = t.history(period=period, interval=interval)
         if df.empty:
             return df
         df = df.rename(
@@ -306,4 +319,67 @@ def get_yfinance_history(
         return df
     except Exception as exc:
         logger.warning("get_yfinance_history(%s) failed: %s", ticker, exc)
+        return pd.DataFrame()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Chinese ETF / Fund history  (akshare)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def get_fund_history(
+    code: str,
+    start: str = "",
+    end: str = "",
+    adjust: str = "qfq",
+) -> pd.DataFrame:
+    """
+    Return daily OHLCV for a Chinese ETF or open-end fund via akshare.
+
+    Parameters
+    ----------
+    code:   Fund / ETF code, e.g. "510300" (CSI 300 ETF)
+    start:  ISO date string "YYYY-MM-DD" (default: 1 year ago)
+    end:    ISO date string "YYYY-MM-DD" (default: today)
+    adjust: Price-adjustment type "qfq" | "hfq" | "" (default: "qfq")
+    """
+    code = code.strip()
+    if not end:
+        end = date.today().strftime("%Y%m%d")
+    else:
+        end = end.replace("-", "")
+    if not start:
+        start = (date.today() - timedelta(days=365)).strftime("%Y%m%d")
+    else:
+        start = start.replace("-", "")
+
+    key = _cache_key("fund", code, start, end, adjust)
+    cached = cache.get(key)
+    if cached is not None:
+        return pd.DataFrame(cached)
+
+    try:
+        df = ak.fund_etf_hist_em(
+            symbol=code,
+            period="daily",
+            start_date=start,
+            end_date=end,
+            adjust=adjust,
+        )
+        col_map = {
+            "日期": "date",
+            "开盘": "open",
+            "收盘": "close",
+            "最高": "high",
+            "最低": "low",
+            "成交量": "volume",
+            "成交额": "amount",
+            "涨跌幅": "pct_chg",
+        }
+        df = df.rename(columns=col_map)
+        df = df[df.columns.intersection(list(col_map.values()))]
+        df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
+        cache.set(key, df.to_dict(orient="records"), cache.TTL_DAILY)
+        return df
+    except Exception as exc:
+        logger.warning("get_fund_history(%s) failed: %s", code, exc)
         return pd.DataFrame()

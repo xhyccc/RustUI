@@ -22,11 +22,12 @@ from __future__ import annotations
 import ast
 import math
 import operator
-from typing import Union
+from typing import Optional, Union
 
 import numpy as np
 import pandas as pd
 
+from .backtest import BacktestResult, run_backtest
 from .utils import nan_to_none
 
 # Allowed AST node types for security
@@ -239,6 +240,42 @@ class AlphaEngine:
             )
         result.index = self._df.index
         return result
+
+    def backtest(
+        self,
+        expression: str,
+        annual_risk_free: float = 0.0,
+        trading_days: int = 252,
+    ) -> BacktestResult:
+        """
+        Backtest an alpha factor expression using the backtrader engine.
+
+        The alpha signal is computed from *expression*, then passed to
+        :func:`backend.backtest.run_backtest` which runs a full backtrader
+        simulation and returns Jensen's alpha, beta, and Sharpe ratio.
+
+        Parameters
+        ----------
+        expression:       Alpha factor expression string.
+        annual_risk_free: Annualised risk-free rate (e.g. 0.02 for 2 %).
+                          Default 0.
+        trading_days:     Trading days per year used for annualisation.
+                          Default 252.
+
+        Returns
+        -------
+        BacktestResult
+            Dataclass with ``alpha``, ``beta``, ``sharpe_ratio``,
+            ``annualized_return``, ``annualized_volatility``, ``dates``,
+            ``strategy_returns``, and ``cumulative_returns``.
+        """
+        signal = self.eval(expression)
+        return run_backtest(
+            self._df,
+            signal,
+            annual_risk_free=annual_risk_free,
+            trading_days=trading_days,
+        )
 
     def eval_to_list(self, expression: str) -> list:
         """Evaluate expression and return a list of floats (NaN → None)."""
